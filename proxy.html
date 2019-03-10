@@ -1,0 +1,206 @@
+<html>
+<head>
+    <title>proxy 应用场景学习</title>
+    <style>
+        .header { line-height: 60px; font-size: 20px; }
+        .items { line-height: 30px; }
+    </style>
+</head>
+<body>
+    <div class="header">(*￣︶￣)Proxy 应用场景学习</div>
+    <div class="items">一、抽离校验模块</div>
+    <div class="items">二、私有属性</div>
+    <div class="items">三、访问日志</div>
+    <div class="items">四、预警和拦截</div>
+    <div class="items">五、过滤操作</div>
+    <div class="items">六、中断代理</div>
+
+    <script>
+        console.log('=====Proxy：抽离校验模块实现=======')
+        // 抽离校验模块
+        let numericDataStore = {
+            count: 0,
+            amount: 1234,
+            total: 14,
+        }
+
+        numericDataStore = new Proxy(numericDataStore, {
+            set(target, key, value, proxy) {
+                if (typeof value !== 'number') {
+                    // throw Error("Properties in numericDataStore can only be numbers");
+                    console.log('Uncaught Error: Properties in numericDataStore can only be numbers')
+                }
+                return Reflect.set(target, key, value, proxy)
+            }
+        })
+        numericDataStore.count = 'foo';
+        // numericDataStore.count = 333;
+        console.log(numericDataStore.count, '====numericDataStore.count')
+    </script>
+
+    <script type="text/javascript">
+        function createValidator(target, validator) {
+            return new Proxy (target, {
+                _validator: validator,
+                set(target, key, value, proxy) {
+                    if (target.hasOwnProperty(key)) {
+                        let validator = this._validator[key]
+                        if (!!validator(value)) {
+                            return Reflect.set(target, key, value, proxy)
+                        } else {
+                            throw Error(`Cannot set ${key} to ${value}. Invalid.`);
+                        }
+                    } else {
+                        throw Error(`${key} is not a valid property`)
+                    }
+                }
+            })
+        }
+
+        const personValidator = {
+            name(val) {
+                return typeof val === 'string';
+            },
+            age(val) {
+                return typeof age === 'number' && age > 18
+            },
+        }
+
+        class Person {
+            constructor(name, age) {
+                this.name = name
+                this.age = age
+                return createValidator(this, personValidator)
+            }
+        }
+
+        const bill = new Person('Catherine', 25)
+
+        // bill.name = 0
+        // bill.age = 'Bill'
+        // bill.age = 15;
+    </script>
+    <script>
+        console.log('=====Proxy：私有属性实现=======')
+        var api = {  
+            _apiKey: '123abc456def',
+            /* mock methods that use this._apiKey */
+            getUsers: function(){}, 
+            getUser: function(userId){}, 
+            setUser: function(userId, config){}
+        }
+
+        console.log("An apiKey we want to keep private", api._apiKey)
+        api._apiKey = '987654321'
+        console.log(api._apiKey)
+    </script>
+    <script>
+        console.log('第一种方法是使用 set / get 拦截读写请求并返回 undefined:')
+        let apiConf = {  
+            _apiKey: '123abc456def',
+            getUsers: function(){ }, 
+            getUser: function(userId){ }, 
+            setUser: function(userId, config){ }
+        };
+
+        const RESTRICTED = ['_apiKey'] // restricted
+        apiConf = new Proxy(apiConf, {
+            get(target, key, proxy) {
+                if (RESTRICTED.indexOf(key) > -1) {
+                    // throw Error(`${key} is restricted. Please see api documentation for further info.`);
+                    console.log(`${key} is restricted. Please see api documentation for further info.`)
+                    return null
+                }
+                return Reflect.get(target, key, proxy)
+            },
+            set(target, key, value, proxy) {
+                if (RESTRICTED.indexOf(key) > -1) {
+                    // throw Error(`${key} is restricted. Please see api documentation for further info.`);
+                    console.log(`${key} is restricted. Please see api documentation for further info.`)
+                    return null
+                }
+                return Reflect.set(target, key, value, proxy)
+            }
+        })
+
+        // 以下错误都会抛出错误
+        apiConf._apiKey = '987654321'
+        console.log(apiConf._apiKey, '====访问内部变量apiConf._apiKey')
+    </script>
+    <script type="text/javascript">
+        console.log('第二种方法是使用has拦截in 操作')
+        var apiHas = {
+            _apiKey: '123abc456def',
+            getUsers: function(){ }, 
+            getUser: function(userId){ }, 
+            setUser: function(userId, config){ }
+        }
+
+        const RESTRICTED_HAS = ['_apiKey']
+
+        apiHas = new Proxy(apiHas, {
+            has(target, key) {
+                // has(target, propKey)：拦截propKey in proxy的操作，返回一个布尔值。
+                return (RESTRICTED_HAS.indexOf(key) > -1) ? 
+                        false : Reflect.has(target, key)
+            }
+        })
+
+        // these log false, and `for in` iterators will ignore _apiKey
+        console.log('_apiKey' in apiHas)
+        console.log(apiHas._apiKey, '=====apiHas._apiKey')
+
+        // ????
+        for (var key in  apiHas) {
+            if (apiHas.hasOwnProperty(key) && key === '_apiKey') {
+                console.log("This will never be logged because the proxy obscures _apiKey...")
+            }
+        }
+    </script>
+
+    <script>
+        console.log('======Proxy：访问日志实现')
+        // 对于那些调用频繁、运行缓慢或占用执行环境资源较多的属性或接口，开发者会希望记录它们的使用情况或性能表现，这个时候就可以使用 Proxy 充当中间件的角色，轻而易举实现日志功能：
+        let apiLog = {  
+            _apiKey: '123abc456def',
+            getUsers: function() { /* ... */ },
+            getUser: function(userId) { /* ... */ },
+            setUser: function(userId, config) { /* ... */ }
+        };
+
+        function logMethodAsync(timestamp, method) {  
+            setTimeout(function() {
+                console.log(`${timestamp} - Logging ${method} request asynchronously.`);
+            }, 0)
+        }
+
+        apiLog = new Proxy(apiLog, {
+            get: function(target, key, proxy) {
+                var value = target[key]
+                return function(...arguments) {
+                    console.log(arguments, '====arguments')
+                    logMethodAsync(new Date(), key)
+                    return Reflect.apply(value, target, arguments)
+                }
+            }
+        })
+
+        apiLog.getUser('catherine', '12')
+        apiLog.getUsers()
+    </script>
+    <script>    
+        console.log('=====Proxy: 预警和拦截')
+        // Proxy: deleteProperty(target, key)
+        // Reflect.deleteProperty(target, key)
+    </script>
+    <script>
+        console.log('=====Proxy: 中断代理')
+        // Proxy 支持随时取消对 target 的代理，这一操作常用于完全封闭对数据或接口的访问。在下面的示例中，我们使用了 Proxy.revocable 方法创建了可撤销代理的代理对象：
+        let sensitiveData = {
+            username: 'catherine'
+        }
+
+        const { sensitiveData, revokeAccess } = Proxy.revocable(send)
+    </script>
+</body>
+</html>
